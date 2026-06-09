@@ -16,14 +16,12 @@ import numpy as np
 import os
 import math  
 
-def save_chunks_to_json(dataset_chunks, fhr_events, output_filepath):
+def save_chunks_to_json(dataset_chunks, fhr_events, fhr_windows, output_filepath):
     """
     Saves the strict 20-minute signal chunks, calculated contraction metrics,
     and FHR events to a formatted JSON file for convenient hand-corrections.
     """
     serializable_chunks = []
-    
-    # 20 minutes in seconds
     CHUNK_DURATION_S = 1200.0 
 
     for chunk in dataset_chunks:
@@ -36,10 +34,6 @@ def save_chunks_to_json(dataset_chunks, fhr_events, output_filepath):
         toco_arr = chunk["filtered_toco_values"]
         fhr_arr = chunk["fhr_values"]
 
-        # Fast list comprehension: 
-        # 1. Checks for NaN using the highly optimized math.isnan
-        # 2. Replaces NaNs with None (which becomes standard 'null' in JSON)
-        # 3. Rounds valid floats to the nearest whole number and casts to int
         toco_signal_list = [None if math.isnan(v) else int(round(v)) for v in toco_arr]
         fhr_signal_list = [None if math.isnan(v) else int(round(v)) for v in fhr_arr]
 
@@ -84,9 +78,27 @@ def save_chunks_to_json(dataset_chunks, fhr_events, output_filepath):
             }
         )
 
+    formatted_windows = []
+    for win in fhr_windows:
+        formatted_windows.append({
+            "start_idx": int(win["start_idx"]),
+            "end_idx": int(win["end_idx"]),
+            "start_seconds": float(win["start_seconds"]),
+            "end_seconds": float(win["end_seconds"]),
+            "baseline": float(win["baseline"]),
+            "base_class": str(win["base_class"]),
+            "variability": float(win["variability"]),
+            "var_class": str(win["var_class"])
+        })
+
+    final_export_data = {
+        "baselines": formatted_windows,
+        "chunks": serializable_chunks
+    }
+
     # Write file out with clean indentation
     with open(output_filepath, "w", encoding="utf-8") as f:
-        json.dump(serializable_chunks, f, indent=4, ensure_ascii=False)
+        json.dump(final_export_data, f, indent=4, ensure_ascii=False)
 
     print(f"Successfully generated dataset JSON for corrections: {output_filepath}")
 
@@ -120,22 +132,21 @@ class CTGInteractiveViewer(QMainWindow):
 
 
     def _save_corrections_to_json(self):
-        """Chama a rotina de salvamento passando os dados que estão em memória de forma dinâmica."""
+        """Calls the save routine, dinamically passing the data stored in memory."""
         # Check if loader has data loaded
         if hasattr(self.data_loader, "toco_chunks") and self.data_loader.toco_chunks:
-            # Get the original file path loaded dynamically
             if hasattr(self.data_loader, "current_filepath") and self.data_loader.current_filepath:
                 base_path, _ = os.path.splitext(self.data_loader.current_filepath)
                 output_path = f"{base_path}_chunks_corrected.json"
             else:
-                # Fallback path if path retrieval failed
                 output_path = "Data/Num1_RData_chunks_corrected.json"
 
-            # Safely fetch FHR events from the DataLoader (defaults to empty list if none exist)
             current_fhr_events = getattr(self.data_loader, "fhr_events", [])
 
+            current_fhr_windows = getattr(self.data_loader, "fhr_windows", [])
+
             # Execute save with the new parameter
-            save_chunks_to_json(self.data_loader.toco_chunks, current_fhr_events, output_path)
+            save_chunks_to_json(self.data_loader.toco_chunks, current_fhr_events, current_fhr_windows, output_path)
         else:
             print("Error: no data to save.")
 

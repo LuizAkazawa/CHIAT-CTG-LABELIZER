@@ -89,8 +89,8 @@ class DataLoader:
         toco_segments = get_toco_segments(raw_toco, filtered_toco)
 
         raw_contractions = find_contractions(filtered_toco, toco_segments, threshold=15)
-        rounded_bases, bases_class, true_baseline, remo_baselines, variabilities, var_class = self._process_fhr(fhr_clean, fhr_filled, smooth_fhr, raw_contractions)
-        self.fhr_events = self._process_events(fhr_filled, rounded_bases, raw_contractions)
+        self.fhr_windows = self._process_fhr(fhr_clean, fhr_filled, smooth_fhr, raw_contractions)
+        self.fhr_events = self._process_events(fhr_filled, self.fhr_windows, raw_contractions)
         self.toco_chunks = split_into_20min_chunks(fhr_raw, filtered_toco, raw_toco, raw_contractions, fs=4.0)
 
         # Map global references directly to the chunks
@@ -99,26 +99,23 @@ class DataLoader:
             for c in chunk["contractions"]:
                 self.contractions.append(c)
 
-        self.true_baseline = true_baseline
-        self.variabilities = variabilities
-        self.bases_class = bases_class
-        self.var_class = var_class
-
         # Update plots
         self.plot_area.clear_annotations()
         self.plot_area.update_signals(time_data, fhr_raw, raw_toco)
 
-        self.plot_area.registrar_callback_clique(
+        self.plot_area.register_callback_click(
             callback_funcao=self.add_manual_contraction, 
             callback_delete=self.remove_contraction_toco,
             cb_fhr_add=self.add_fhr_event,
             cb_fhr_del=self.remove_fhr_event,
-            cb_status_update=self.update_fhr_status  # <-- Explicitly bound keyword!
+            cb_status_update=self.update_fhr_status,
+            cb_baseline_add=self.add_baseline_window,     
+            cb_baseline_del=self.remove_baseline_window   
         )
 
         self._draw_all(
-            time_data, toco_segments, rounded_bases, true_baseline,
-            bases_class, variabilities, var_class,
+            time_data, toco_segments, 
+            self.fhr_windows,
             self.toco_chunks, self.fhr_events, fetal_movs
         )
         self.plot_area.reset_view()
@@ -203,16 +200,31 @@ class DataLoader:
         variabilities = compute_variability(fhr_filled)
         var_class = classify_variability(variabilities, self.ctg_rules)
 
-        return (
-            rounded_bases,
-            bases_class,
-            true_baseline,
-            remo_baselines,
-            variabilities,
-            var_class,
-        )
+        fhr_windows = []
+        for i in range(len(true_baseline)):
+            if np.isnan(true_baseline[i]):
+                continue
+            start_s = i * 600.0
+            end_s = (i + 1) * 600.0
+            
+            fhr_windows.append({
+                "type": "window",
+                "start_seconds": float(start_s),
+                "end_seconds": float(end_s),
+                "start_idx": int(start_s * fs),
+                "end_idx": int(end_s * fs),
+                "baseline": float(true_baseline[i]),
+                "base_class": bases_class[i],
+                "variability": float(variabilities[i]) if i < len(variabilities) and not np.isnan(variabilities[i]) else 0.0,
+                "var_class": var_class[i] if i < len(var_class) else "Undefined"
+            })
+            
+        return fhr_windows
 
-    def _process_events(self, fhr_filled, rounded_bases, contractions):
+    def _process_events(self, fhr_filled, fhr_windows, contractions):
+        rounded_bases = [w["baseline"] for w in fhr_windows] 
+        if not rounded_bases:
+            rounded_bases = [120.0] #just testing
         events = find_events(fhr_filled, rounded_bases)
         class_events = classify_events(fhr_filled, events, self.ctg_rules, contractions)
         resolved_events = resolve_fhr_overlaps(class_events)
@@ -222,22 +234,15 @@ class DataLoader:
 
     # ── Drawing ──────────────────────────────────────────────────────────────
 
-    def _draw_all(self, time_data, toco_segments, rounded_bases, true_baseline, bases_class, variabilities, var_class, toco_chunks, class_events, fetal_movs):
+    def _draw_all(self, time_data, toco_segments, fhr_windows, toco_chunks, class_events, fetal_movs):
 
         sb = self.sidebar
 
         self.plot_area.draw_grid_lines(time_data[-1])
+        self.plot_area.draw_toco_baselines(toco_segments)
+        
+        self.plot_area.draw_fhr_windows(fhr_windows) 
 
-        self.plot_area.draw_toco_baselines(
-            toco_segments
-        )
-        self.plot_area.draw_fhr_baselines(
-            rounded_bases,
-            true_baseline,
-            bases_class,
-            variabilities,
-            var_class
-        )
         for chunk in toco_chunks:
             chunk_idx = chunk.get("chunk_index", 0)
             chunk_offset = chunk_idx * 1200.0
@@ -248,9 +253,7 @@ class DataLoader:
             )
 
         self.plot_area.draw_fetal_movs(fetal_movs)
-
         self.plot_area.draw_events(class_events)
-
 
 
     # ── Areas Creation ──────────────────────────────────────────────────────────────
@@ -265,9 +268,9 @@ class DataLoader:
             print(f"Error: chunk {chunk_idx} not found.")
             return
 
-        tempo_relativo_segundos = tempo_segundos % 1200
-        start_rel_s = max(0.0, tempo_relativo_segundos - (duracao_padrao / 2))
-        end_rel_s = tempo_relativo_segundos + (duracao_padrao / 2)
+        relative_time_seconds = tempo_segundos % 1200
+        start_rel_s = max(0.0, relative_time_seconds - (duracao_padrao / 2))
+        end_rel_s = relative_time_seconds + (duracao_padrao / 2)
 
         start_idx = int(start_rel_s * fs)
         end_idx = int(end_rel_s * fs)
@@ -285,59 +288,57 @@ class DataLoader:
             true_peak_s = true_peak_rel_idx / fs
         else:
             # Fallback just in case the segment calculation goes out of bounds
-            true_peak_s = tempo_relativo_segundos
+            true_peak_s = relative_time_seconds
 
-        nova_contracao = {
+        new_contraction = {
             "start_idx": start_idx,
             "end_idx": end_idx,
             "start_seconds": float(start_rel_s),
             "end_seconds": float(end_rel_s),
             "duration": float(duracao_padrao),
-            "peak_s": float(true_peak_s),  # Now mathematically snapped to the highest value!
+            "peak_s": float(true_peak_s), 
         }
 
         # Append reference to both places cleanly
-        self.toco_chunks[chunk_idx]["contractions"].append(nova_contracao)
-        self.contractions.append(nova_contracao)
+        self.toco_chunks[chunk_idx]["contractions"].append(new_contraction)
+        self.contractions.append(new_contraction)
 
         chunk_offset = chunk_idx * 1200.0
         
         self.plot_area.draw_contractions(
-            [nova_contracao], chunk_offset_seconds=chunk_offset, chunk_signal=chunk_toco_signal
+            [new_contraction], chunk_offset_seconds=chunk_offset, chunk_signal=chunk_toco_signal
         )
         print(
-            f"New contraction added on chunk: {chunk_idx}. Clicked at {tempo_relativo_segundos:.2f}s, Peak snapped to {true_peak_s:.2f}s"
+            f"New contraction added on chunk: {chunk_idx}. Clicked at {relative_time_seconds:.2f}s, Peak snapped to {true_peak_s:.2f}s"
         )
 
     def remove_contraction_toco(self, meta):
-        """Remove uma contração dos dados em memória usando remoção por identidade."""
-        # Remover de self.contractions usando .remove() baseado na identidade do dicionário
+        """Remove contraction from memory."""
         if meta in self.contractions:
             self.contractions.remove(meta)
 
-        # Remover de dentro do chunk específico correspondente
         if hasattr(self, "toco_chunks"):
             for chunk in self.toco_chunks:
                 if meta in chunk["contractions"]:
                     chunk["contractions"].remove(meta)
-                    break  # Encontrou e removeu, pode parar o loop
+                    break 
 
         print(f"Contraction succesfully removed from both buffers.")
 
 
-    def add_fhr_event(self, tempo_segundos, tipo_evento="acceleration"):
+    def add_fhr_event(self, time_seconds, event_type="acceleration"):
         """Cria um novo evento FHR baseado no clique do usuário."""
-        duracao_padrao = 45.0  # Default width for events
-        start_s = max(0.0, tempo_segundos - (duracao_padrao / 2))
-        end_s = tempo_segundos + (duracao_padrao / 2)
+        default_width = 45.0  # Default width for events
+        start_s = max(0.0, time_seconds - (default_width / 2))
+        end_s = time_seconds + (default_width / 2)
 
         # Define the sub-type dynamically based on the click
-        sub_tipo = "Manual Accel" if tipo_evento == "acceleration" else "Manual Decel"
+        sub_type = "Manual Accel" if event_type == "acceleration" else "Manual Decel"
 
-        if tipo_evento == "acceleration":
-            new_evento = {
-                "type": tipo_evento,
-                "sub-type": sub_tipo,
+        if event_type == "acceleration":
+            new_event = {
+                "type": event_type,
+                "sub-type": sub_type,
                 "start_seconds": float(start_s),
                 "end_seconds": float(end_s),
                 "start_idx": int(start_s * 4.0),
@@ -345,9 +346,9 @@ class DataLoader:
             }
         
         else:
-            new_evento = {
-                "type": tipo_evento,
-                "sub-type": sub_tipo,
+            new_event = {
+                "type": event_type,
+                "sub-type": sub_type,
                 "start_seconds": float(start_s),
                 "end_seconds": float(end_s),
                 "start_idx": int(start_s * 4.0),
@@ -367,40 +368,63 @@ class DataLoader:
                 }
             }
 
-        self.fhr_events.append(new_evento)
+        self.fhr_events.append(new_event)
         
         # Draw just this new event incrementally
-        self.plot_area.draw_events([new_evento])
-        print(f"New FHR event ({tipo_evento}) added manually in {tempo_segundos:.2f}s")
+        self.plot_area.draw_events([new_event])
+        print(f"New FHR event ({event_type}) added manually in {time_seconds:.2f}s")
 
 
-    def update_fhr_status(self, window_idx, new_base_val, new_var_val):
-        """Atualiza os valores numéricos, reclassifica e retorna as novas strings."""
+    def update_fhr_status(self, meta_dict, new_base_val, new_var_val):
+        """Update the dictionary directly on memory."""
         
-        # 1. Update numerical arrays
-        if hasattr(self, 'true_baseline') and window_idx < len(self.true_baseline):
-            self.true_baseline[window_idx] = new_base_val
-        if hasattr(self, 'variabilities') and window_idx < len(self.variabilities):
-            self.variabilities[window_idx] = new_var_val
+        meta_dict["baseline"] = float(new_base_val)
+        meta_dict["variability"] = float(new_var_val)
 
-        # 2. Re-run your fhr.py classification logic on the specific new values
-        # We wrap them in brackets [] because your classify functions expect iterables
-        new_base_class = classify_baseline([new_base_val], self.ctg_rules)[0]
-        new_var_class = classify_variability([new_var_val], self.ctg_rules)[0]
+        base_results = classify_baseline([new_base_val], self.ctg_rules)
+        var_results = classify_variability([new_var_val], self.ctg_rules)
 
-        # 3. Update classification arrays
-        if hasattr(self, 'bases_class') and window_idx < len(self.bases_class):
-            self.bases_class[window_idx] = new_base_class
-        if hasattr(self, 'var_class') and window_idx < len(self.var_class):
-            self.var_class[window_idx] = new_var_class
+        new_base_class = base_results[0] if base_results else "Undefined"
+        new_var_class = var_results[0] if var_results else "Undefined"
+
+        meta_dict["base_class"] = new_base_class
+        meta_dict["var_class"] = new_var_class
             
-        print(f"Window {window_idx+1} mathematically reclassified: {new_base_val} -> {new_base_class}, {new_var_val} -> {new_var_class}")
-        
-        # 4. Return the new classification strings back to the UI
+        print(f"Window dynamically reclassified: {new_base_val} -> {new_base_class}")
         return new_base_class, new_var_class
 
     def remove_fhr_event(self, meta):
-        """Remove um evento FHR da memória."""
+        """Removes a FHR event from memory."""
         if meta in self.fhr_events:
             self.fhr_events.remove(meta)
             print("FHR event succesfully removed.")
+
+    
+    def add_baseline_window(self, time_sec):
+        """Create a new 10min window with baseline/variability to be defined."""
+        window_size = 600.0 
+        
+        start_s = max(0.0, time_sec - (window_size / 2))
+        end_s = time_sec + (window_size / 2)
+        
+        new_window = {
+            "type": "window",
+            "start_seconds": float(start_s),
+            "end_seconds": float(end_s),
+            "start_idx": int(start_s * 4.0),
+            "end_idx": int(end_s * 4.0),
+            "baseline": 120.0,    # Safe default; user can immediately double-click to edit
+            "base_class": "Normal",
+            "variability": 5.0,   # Safe default
+            "var_class": "Normal"
+        }
+        
+        self.fhr_windows.append(new_window)
+        self.plot_area.draw_fhr_windows([new_window])
+        print(f"New Baseline Window added manually at {time_sec:.2f}s")
+        
+    def remove_baseline_window(self, meta):
+        """Remove baseline window from memory."""
+        if hasattr(self, 'fhr_windows') and meta in self.fhr_windows:
+            self.fhr_windows.remove(meta)
+            print("Baseline window successfully removed from memory.")

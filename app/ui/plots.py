@@ -3,7 +3,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QApplication, QInputDialog, 
                              QDialog, QFormLayout, QComboBox, QDialogButtonBox,
-                             QSpinBox, QDoubleSpinBox) # <-- Added SpinBoxes
+                             QSpinBox, QDoubleSpinBox)
 from PyQt6.QtCore import Qt
 
 
@@ -34,6 +34,7 @@ class NumericMetricsDialog(QDialog):
     def __init__(self, current_base, current_var, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Window Metrics")
+        self.deleted = False
         
         layout = QFormLayout(self)
 
@@ -53,12 +54,20 @@ class NumericMetricsDialog(QDialog):
         layout.addRow("Variability (bpm):", self.var_spin)
 
         # OK / Cancel Buttons
-        buttons = QDialogButtonBox(
+        self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.btn_delete = self.buttons.addButton("Delete Window", QDialogButtonBox.ButtonRole.DestructiveRole)
+
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.buttons.clicked.connect(self._on_button_clicked)
+        layout.addWidget(self.buttons)
+    
+    def _on_button_clicked(self, button):
+        if button == self.btn_delete:
+            self.deleted = True
+            self.accept()
 
     def get_values(self):
         return self.base_spin.value(), self.var_spin.value()
@@ -86,8 +95,8 @@ class PlotArea(QWidget):
     def _setup_plots(self):
         self.p1 = self.win.addPlot(title="Fetal Heart Rate (bpm)")
         self.p1.setLabel('left', "FHR", units='bpm')
-        self.p1.setYRange(60, 200, padding=0)
-        self.p1.setLimits(yMin=60, yMax=200, xMin=0)
+        self.p1.setYRange(60, 210, padding=0)
+        self.p1.setLimits(yMin=60, yMax=210, xMin=0)
         self.p1.getAxis('left').setTickSpacing(10, 5)
         self.p1.getAxis('bottom').setTickSpacing(60, 20)
         self.p1.showGrid(x=False, y=True)
@@ -99,7 +108,7 @@ class PlotArea(QWidget):
         self.p2.setLabel('left', "Toco")
         self.p2.setLabel('bottom', "Time", units='s')
         self.p2.setYRange(0, 100)
-        self.p2.setLimits(yMin=0, yMax=100)
+        self.p2.setLimits(yMin=0, yMax=100, xMin=0)
         self.p2.getAxis('bottom').setTickSpacing(60, 20)
         self.p2.showGrid(x=False, y=True)
         self.p2.setXLink(self.p1)
@@ -124,8 +133,9 @@ class PlotArea(QWidget):
         self.decel_labels         = []
         self.contraction_regions  = []
         self.contraction_labels   = []
-        self.fm_items = []
+        self.fm_items             = []
         self.grid_lines           = []
+        self.window_regions       = []
 
     # ── Data update ─────────────────────────────────────────────────────────
 
@@ -141,7 +151,7 @@ class PlotArea(QWidget):
             self.accel_regions + self.accel_labels +
             self.decel_regions + self.decel_labels +
             self.contraction_regions + self.contraction_labels + self.fm_items +
-            self.grid_lines
+            self.grid_lines + self.window_regions
         )
         for item in all_items:
             for plot in [self.p1, self.p2]:
@@ -167,49 +177,79 @@ class PlotArea(QWidget):
             line = self.p2.plot([t_start, t_end], [val, val], pen=PEN_TOCO_BASELINE)
             self.toco_baseline_items.append(line)
 
-    def draw_fhr_baselines(self, rounded_bases, true_paper_baseline, bases_class,
-                            variabilities, var_class):
-        window_sec = 600
-        for i, val in enumerate(rounded_bases):
-            if np.isnan(val):
-                continue
+    def draw_fhr_windows(self, fhr_windows):
+        if not hasattr(self, 'window_regions'):
+            self.window_regions = []
 
-            t_start = i * window_sec
-            t_end   = t_start + window_sec
+        for i, win in enumerate(fhr_windows):
+            t_start = win['start_seconds']
+            t_end   = win['end_seconds']
+            f_val   = win['baseline']
 
-            # True Paper baseline
-            f_val  = true_paper_baseline[i]
+            # Create the movable region (light transparent blue so it doesn't clutter)
+            region = pg.LinearRegionItem(
+                values=[t_start, t_end],
+                movable=True, 
+                brush=(0, 0, 255, 15), 
+                pen=pg.mkPen(color='b', width=1, style=Qt.PenStyle.DotLine)
+            )
+            self.p1.addItem(region)
+            self.window_regions.append(region)
+
             f_line = self.p1.plot([t_start, t_end], [f_val, f_val], pen=PEN_TRUE_PAPER_BASELINE)
             self.final_baseline_items.append(f_line)
 
-            # Window info label
-            b_status = bases_class[i]
-            v_status = var_class[i] if i < len(var_class) else "N/A"
+            b_status = win['base_class']
+            v_status = win['var_class']
             html = f"""
-                <div style="background-color: rgba(255,255,255,180); padding:4px;
-                            border:1px solid gray; border-radius:3px;">
-                    <b style="color:black; font-size:12pt;">Window {i+1}:</b><br>
-                    <span style="color:#2ca02c; font-size:11pt;">Baseline: {f_val:.0f} - {b_status}</span><br>
-                    <span style="color:blue; font-size:11pt;">
-                        Variability: {variabilities[i]:.2f} - {v_status}
-                    </span>
+                <div style="background-color: rgba(255,255,255,180); padding:4px; border:1px solid gray; border-radius:3px;">
+                    <b style="color:black; font-size:12pt;">Baseline Window</b><br>
+                    <span style="color:#2ca02c; font-size:11pt;">FHR: {f_val:.0f} - {b_status}</span><br>
+                    <span style="color:blue; font-size:11pt;">Var: {win['variability']:.2f} - {v_status}</span>
                 </div>
             """
             label = pg.TextItem(html=html, anchor=(0, 0))
-            
-            # ── INJECT METADATA & BIND LINE ──
-            label.ctg_window_idx = i
-            label.ctg_base_val   = f_val
-            label.ctg_var_val    = variabilities[i]
-            label.ctg_line_item  = f_line 
-            label.ctg_t_start    = t_start
-            label.ctg_t_end      = t_end   
-            
-            label.mouseDoubleClickEvent = lambda evnt, lbl=label: self._on_status_double_click(evnt, lbl)
-
             self.p1.addItem(label)
             label.setPos(t_start + 10, 195)
             self.status_items.append(label)
+
+            # Inject Metadata and Cross-References
+            region.ctg_meta = win
+            region.ctg_line_item = f_line
+            region.linked_label = label
+            label.ctg_meta = win
+            label.ctg_line_item = f_line
+
+            region.sigRegionChanged.connect(self._on_window_dragging)
+            region.sigRegionChangeFinished.connect(self._on_window_resized)
+            label.mouseDoubleClickEvent = lambda evnt, lbl=label: self._on_status_double_click(evnt, lbl)
+
+
+    def _on_window_dragging(self, region):
+        """Keeps the dashed line and label locked inside the box while dragging."""
+        minX, maxX = region.getRegion()
+        f_val = region.ctg_meta['baseline']
+        
+        # Stretch the dashed line to match the new boundaries
+        region.ctg_line_item.setData([minX, maxX], [f_val, f_val])
+        
+        # Lock the label to the left edge
+        if hasattr(region, 'linked_label'):
+            current_y = region.linked_label.pos().y()
+            region.linked_label.setPos(minX + 10, current_y)
+
+    def _on_window_resized(self, region):
+        """Saves the new boundaries to the dictionary when you let go of the mouse."""
+        abs_start, abs_end = region.getRegion()
+        fs = 4.0
+        
+        win = region.ctg_meta
+        win['start_seconds'] = float(max(0.0, abs_start))
+        win['end_seconds'] = float(abs_end)
+        win['start_idx'] = int(round(win['start_seconds'] * fs))
+        win['end_idx'] = int(round(win['end_seconds'] * fs))
+        
+        print(f"Baseline window modified: {win['start_seconds']:.2f}s to {win['end_seconds']:.2f}s")
 
     def draw_contractions(self, contractions, chunk_offset_seconds=0.0, chunk_signal=None):
         """Drawing contractions (p2)."""
@@ -228,7 +268,7 @@ class PlotArea(QWidget):
             region_p2.ctg_meta = con
             region_p2.ctg_fs = 4.0
             region_p2.ctg_offset = chunk_offset_seconds
-            region_p2.ctg_signal = chunk_signal  # <--- Store the signal here!
+            region_p2.ctg_signal = chunk_signal
             
             region_p2.sigRegionChangeFinished.connect(self._on_contraction_resized)
             region_p2.mouseDoubleClickEvent = lambda ev, reg=region_p2: self._on_contraction_double_click(ev, reg)
@@ -280,51 +320,59 @@ class PlotArea(QWidget):
         else:
             region.ctg_meta['peak_s'] = float((rel_start + rel_end) / 2)
 
-        print(f"Modificado via arrastar: start={rel_start:.2f}s  end={rel_end:.2f}s  peak_s={region.ctg_meta['peak_s']:.2f}s")
+        print(f"Modified via dragging: start={rel_start:.2f}s  end={rel_end:.2f}s  peak_s={region.ctg_meta['peak_s']:.2f}s")
 
     def _on_status_double_click(self, ev, label):
-        """Opens dialog box and changes baseline line."""
         ev.accept()
+        win_meta = label.ctg_meta
         
-        dialog = NumericMetricsDialog(label.ctg_base_val, label.ctg_var_val, self)
+        dialog = NumericMetricsDialog(win_meta['baseline'], win_meta['variability'], self)
         
         if dialog.exec():
+            if getattr(dialog, 'deleted', False):
+                if hasattr(self, '_callback_delete_baseline'):
+                    self._callback_delete_baseline(win_meta)
+                
+                # Visual Cleanup
+                if label.ctg_line_item in self.final_baseline_items:
+                    self.final_baseline_items.remove(label.ctg_line_item)
+                self.p1.removeItem(label.ctg_line_item)
+                self.p1.removeItem(label)
+                if label in self.status_items:
+                    self.status_items.remove(label)
+                    
+                for reg in self.window_regions:
+                    if reg.ctg_meta is win_meta:
+                        self.p1.removeItem(reg)
+                        self.window_regions.remove(reg)
+                        break
+                return
+
+            # ── Existing Update Logic ──
             new_base_val, new_var_val = dialog.get_values()
             
-            # Request re-classification from DataLoader
             if hasattr(self, '_callback_update_status'):
                 new_base_class, new_var_class = self._callback_update_status(
-                    label.ctg_window_idx, new_base_val, new_var_val
+                    win_meta, new_base_val, new_var_val
                 )
             else:
-                new_base_class, new_var_class = "N/A", "N/A"
+                new_base_class, new_var_class = "Undefined", "Undefined"
             
-            # Update internal label metadata
-            label.ctg_base_val = new_base_val
-            label.ctg_var_val = new_var_val
-            
-            # Move the dashed line on the plot!
-            label.ctg_line_item.setData(
-                [label.ctg_t_start, label.ctg_t_end], 
-                [new_base_val, new_base_val]
-            )
+            minX, maxX = label.ctg_line_item.getData()[0] 
+            label.ctg_line_item.setData([minX, maxX], [new_base_val, new_base_val])
 
-            # Rebuild and apply the HTML with the new numbers and auto-classifications
             html = f"""
-                <div style="background-color: rgba(255,255,255,180); padding:4px;
-                            border:1px solid gray; border-radius:3px;">
-                    <b style="color:black; font-size:12pt;">Window {label.ctg_window_idx+1}:</b><br>
-                    <span style="color:#2ca02c; font-size:11pt;">Baseline: {new_base_val:.0f} - {new_base_class}</span><br>
-                    <span style="color:blue; font-size:11pt;">
-                        Variability: {new_var_val:.2f} - {new_var_class}
-                    </span>
+                <div style="background-color: rgba(255,255,255,180); padding:4px; border:1px solid gray; border-radius:3px;">
+                    <b style="color:black; font-size:12pt;">Baseline Window</b><br>
+                    <span style="color:#2ca02c; font-size:11pt;">FHR: {new_base_val:.0f} - {new_base_class}</span><br>
+                    <span style="color:blue; font-size:11pt;">Var: {new_var_val:.2f} - {new_var_class}</span>
                 </div>
             """
             label.setHtml(html)
 
 
     def _on_contraction_double_click(self, ev, region):
-        """Remove a contração ao fazer duplo clique na região."""
+        """Remove contraction after double click on region."""
         ev.accept()
         meta = region.ctg_meta
 
@@ -373,21 +421,16 @@ class PlotArea(QWidget):
         self.fm_items.append(fm_item)
 
 
-    def registrar_callback_clique(self, callback_funcao, callback_delete=None, cb_fhr_add=None, cb_fhr_del=None, cb_status_update=None):
-        """Permite ao DataLoader registrar funções para clique (novo) e delete."""
-        self._callback_novo_clique = callback_funcao
+    def register_callback_click(self, callback_funcao, callback_delete=None, cb_fhr_add=None, cb_fhr_del=None, cb_status_update=None, cb_baseline_add=None, cb_baseline_del=None):
+        """Permite ao DataLoader registrar funções para click e interações."""
+        self._callback_new_click = callback_funcao
+        if callback_delete: self._callback_delete_contraction = callback_delete
+        if cb_fhr_add: self._callback_new_fhr = cb_fhr_add
+        if cb_fhr_del: self._callback_delete_fhr = cb_fhr_del
+        if cb_status_update: self._callback_update_status = cb_status_update
         
-        if callback_delete:
-            self._callback_delete_contracao = callback_delete
-            
-        if cb_fhr_add:
-            self._callback_novo_fhr = cb_fhr_add
-            
-        if cb_fhr_del:
-            self._callback_delete_fhr = cb_fhr_del
-            
-        if cb_status_update:
-            self._callback_update_status = cb_status_update
+        if cb_baseline_add: self._callback_new_baseline = cb_baseline_add
+        if cb_baseline_del: self._callback_delete_baseline = cb_baseline_del
 
         if not hasattr(self, '_click_connected'):
             self.p1.scene().sigMouseClicked.connect(self._on_plot_clicked)
@@ -395,30 +438,35 @@ class PlotArea(QWidget):
 
 
     def _on_plot_clicked(self, event):
-        """Detecta o clique do mouse no gráfico p1 ou p2."""
+        """Detects mouse click on plot p1/p2."""
         modifiers = QApplication.keyboardModifiers()
 
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
             pos = event.scenePos()
-            
-            # Clicou no FHR (p1)
             if self.p1.sceneBoundingRect().contains(pos):
-                if hasattr(self, '_callback_novo_fhr'):
+                if hasattr(self, '_callback_new_fhr'):
                     mouse_x = self.p1.getViewBox().mapSceneToView(pos).x()
-                    
                     if event.button() == Qt.MouseButton.RightButton:
-                        self._callback_novo_fhr(mouse_x, "acceleration")
+                        self._callback_new_fhr(mouse_x, "acceleration")
                         event.accept()
                     elif event.button() == Qt.MouseButton.LeftButton:
-                        self._callback_novo_fhr(mouse_x, "deceleration")
+                        self._callback_new_fhr(mouse_x, "deceleration")
                         event.accept()
-            
-            # Clicou no TOCO (p2)
             elif self.p2.sceneBoundingRect().contains(pos):
-                if hasattr(self, '_callback_novo_clique'):
+                if hasattr(self, '_callback_new_click'):
                     if event.button() == Qt.MouseButton.RightButton:
                         mouse_x = self.p2.getViewBox().mapSceneToView(pos).x()
-                        self._callback_novo_clique(mouse_x)
+                        self._callback_new_click(mouse_x)
+                        event.accept()
+
+        # ── OPTION/ALT + CLICK (New Baseline) ── I still need to test it on windows os
+        elif modifiers & Qt.KeyboardModifier.AltModifier:
+            pos = event.scenePos()
+            if self.p1.sceneBoundingRect().contains(pos):
+                if hasattr(self, '_callback_new_baseline'):
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        mouse_x = self.p1.getViewBox().mapSceneToView(pos).x()
+                        self._callback_new_baseline(mouse_x)
                         event.accept()
 
 
