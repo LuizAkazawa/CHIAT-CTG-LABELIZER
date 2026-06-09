@@ -1,0 +1,131 @@
+{
+  "baseline": {
+    "duration_required": 600,
+    "normal": {
+      "fhr_min": 110,
+      "fhr_max": 160
+    },
+    "tachycardia": {
+      "fhr_min": 160,
+      "fhr_max": null
+    },
+    "bradycardia": {
+      "fhr_min": null,
+      "fhr_max": 110
+    }
+  },
+  "variability": {
+    "normal": { "var_min": 6, "var_max": 25, "duration_required": 600 },
+    "reduced": { "var_min": 0, "var_max": 6, "duration_required": 3000 },
+    "increased": { "var_min": 25, "var_max": null, "duration_required": 1800 }
+  },
+
+  "acceleration": {
+    "normal": {
+      "duration_min": 15,
+      "diff_onset_to_peak_max": 30,
+      "amp_min": 15,
+      "duration_max": 600
+    },
+
+    "shoulder": {
+      "duration_min": 5,
+      "amp_min": 5,
+      "duration_max": 30,
+      "timing_relative_to_decel": {
+        "initial_max_gap": 10,
+        "terminal_max_gap": 10
+      }
+    }
+  },
+
+  "deceleration": {
+    "amp_min": 15,
+
+    "uniform": {
+      "onset_to_nadir_min": 30,
+      "early": {
+        "duration_min": 30,
+        "duration_max": 60,
+        "lag_after_contraction_min": null,
+        "lag_after_contraction_max": 10,
+        "has_uc_relation": true
+      },
+
+      "late": {
+        "duration_min": 60,
+        "duration_max": 180,
+        "lag_after_contraction_min": 10,
+        "lag_after_contraction_max": null,
+        "has_uc_relation": false
+      }
+    },
+
+    "prolonged": {
+      "duration_min": 180,
+      "duration_max": 600
+    },
+
+    "variable": {
+      "duration_min": 15,
+      "duration_max": 180,
+      "onset_to_nadir_max": 30,
+
+      "typical": {
+        "has_initial_shoulder": true,
+        "has_terminal_shoulder": true,
+        "in_variability": true,
+        "in_acceleration": false,
+        "baseline_drop": 0
+      },
+      "non_typical": {
+        "type1": {
+          "has_initial_shoulder": false,
+          "has_terminal_shoulder": true,
+          "in_variability": true,
+          "in_acceleration": false,
+          "baseline_drop": 0
+        },
+        "type2": {
+          "has_initial_shoulder": true,
+          "has_terminal_shoulder": false,
+          "in_variability": true,
+          "in_acceleration": false,
+          "baseline_drop": 0
+        },
+        "type3": {
+          "has_initial_shoulder": false,
+          "has_terminal_shoulder": false,
+          "in_variability": true,
+          "in_acceleration": false,
+          "baseline_drop": 0
+        },
+        "type4": {
+          "has_initial_shoulder": true,
+          "has_terminal_shoulder": true,
+          "in_variability": true,
+          "in_acceleration": true,
+          "baseline_drop": 0
+        },
+        "type5": {
+          "has_initial_shoulder": false,
+          "has_terminal_shoulder": false,
+          "in_variability": true,
+          "in_acceleration": false,
+          "baseline_drop": 10
+        },
+        "type6": {
+          "has_initial_shoulder": false,
+          "has_terminal_shoulder": false,
+          "in_variability": false,
+          "in_acceleration": false,
+          "baseline_drop": 0
+        }
+      }
+    }
+  },
+  "contractions": {
+    "duration_min": 45,
+    "duration_max": 120
+  }
+}

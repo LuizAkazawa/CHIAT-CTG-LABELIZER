@@ -1,0 +1,117 @@
+{
+  "baseline": {
+    "duration_required": 600,
+    "severe_tachycardia": {
+      "fhr_min": 181,
+      "fhr_max": null
+    },
+    "moderate_tachycardia": {
+      "fhr_min": 161,
+      "fhr_max": 180
+    },
+    "normal": {
+      "fhr_min": 110,
+      "fhr_max": 160
+    },
+    "mild_bradycardia": {
+      "fhr_min": 100,
+      "fhr_max": 109
+    },
+    "moderate_bradycardia": {
+      "fhr_min": 90,
+      "fhr_max": 99
+    },
+    "severe_bradycardia": {
+      "fhr_min": null,
+      "fhr_max": 90
+    }
+
+  },
+  "variability": {
+    "marked": { "var_min": 25, "var_max": null},
+    "normal": { "var_min": 6, "var_max": 25 },
+    "minimal": { "var_min": 2, "var_max": 6 },
+    "absent": { "var_min": 0, "var_max": 2 }
+  },
+
+  "acceleration": {
+    "normal": {
+      "duration_min": 15,
+      "diff_onset_to_peak_max": 30,
+      "amp_min": 15,
+      "duration_max": 120
+    },
+    "shoulder": {
+      "duration_min": 5,
+      "amp_min": 5,
+      "duration_max": 30,
+      "timing_relative_to_decel": {
+        "initial_max_gap": 10,
+        "terminal_max_gap": 10
+      }
+    },
+    "prolonged_acceleration": {
+      "duration_min": 120,
+      "diff_onset_to_peak_max": 30,
+      "amp_min": 15,
+      "duration_max": 600
+    }
+  },
+
+  "deceleration": {
+    "uniform": {
+      "onset_to_nadir_min": 30,
+      "early": {
+        "amp_min": 15,
+        "duration_min": 30,
+        "duration_max": 60,
+        "lag_after_contraction_min": null,
+        "lag_after_contraction_max": 30
+      },
+
+      "late": {
+        "amp_min": null,
+        "duration_min": 60,
+        "duration_max": 120,
+        "lag_after_contraction_min": 30,
+        "lag_after_contraction_max": null
+      }
+    },
+
+    "prolonged": {
+      "duration_min": 120,
+      "duration_max": 600
+    },
+
+    "variable": {
+      "duration_min": 15,
+      "duration_max": 120,
+      "onset_to_nadir_max": 30,
+
+      "typical": {
+        "has_initial_shoulder": true,
+        "has_terminal_shoulder": true,
+        "in_variability": true,
+        "in_acceleration": false,
+        "baseline_drop": 0
+      },
+
+      "atypical": {},
+
+      "moderate_deceleration": {
+        "nadir_bpm_min" : 70,
+        "amp_max" : 60,
+        "duration_max" : 60
+      },
+      "severe_deceleration": {
+        "nadir_bpm_max" : 70,
+        "amp_min" : 60,
+        "duration_min" : 60
+      }
+    }
+  },
+  "contractions": { 
+    "duration_min": 45,
+    "duration_max": 120
+  }
+}
