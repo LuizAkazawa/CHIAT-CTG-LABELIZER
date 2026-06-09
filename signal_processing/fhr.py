@@ -212,8 +212,8 @@ def compute_event_variability(segment, fs=4.0):
         elif segment[i + 1] - segment[i] > 0 and going_up:
             nums.append(np.nan)
             continue
-    print()
-    print(nums)
+    #print()
+    #print(nums)
     return 3
 
 
@@ -268,13 +268,13 @@ def classify_acceleration(rules, duration_sec, onset_to_peak, peak_amp):  # when
     elif rules["prolonged_acceleration"]["duration_max"] < duration_sec <= rules["prolonged_acceleration"]["duration_max"] and onset_to_peak <= rules["prolonged_acceleration"]["diff_onset_to_peak_max"] and peak_amp >= rules["prolonged_acceleration"]["amp_min"]:
         return "Prolonged_Acceleration"
     elif rules["normal"]["duration_min"] < duration_sec < rules["normal"]["duration_max"] and onset_to_peak <= rules["normal"]["diff_onset_to_peak_max"] and peak_amp >= rules["normal"]["amp_min"] :
-        return "Normal"
+        return "Acceleration"
 #    elif rules["shoulder"]["duration_min"] <= duration_sec <= rules["shoulder"]["duration_max"] and peak_amp >= rules["shoulder"]["amp_min"]:
 #        return "Shoulder"
     return False
 
 
-def is_peak(segment, idx_start, min_so_far, fs=4.0):
+def is_peak(segment, idx_start, fs=4.0):
     w = int(2 * fs)
 
     loop_start = max(idx_start - w, 0)
@@ -312,7 +312,7 @@ def classify_deceleration(signal, event, rules, contractions, fs=4):
     segment = signal[start_idx:end_idx]
 
     if rules["prolonged"]["duration_min"] <= duration_sec <= rules["prolonged"]["duration_max"]:
-        return "Prolonged Deceleration"
+        event["sub-type"] = "Prolonged Deceleration"
 
     if rules["variable"]["duration_min"] < duration_sec < rules["variable"]["duration_max"]:  # uniform or variable
         if onset_to_nadir >= rules["variable"]["onset_to_nadir_max"]:  # uniform -> if it's "smooth"
@@ -328,24 +328,26 @@ def classify_deceleration(signal, event, rules, contractions, fs=4):
                 lag = abs(decel_nadir_sec - matching_uc["peak_s"]) #check the lag between FHR valley and UC peak
 
                 if lag <= rules_uniform["early"]["lag_after_contraction_max"]:
-                    return "Early Deceleration"
+                    event["sub-type"] = "Early Deceleration"
                 else:
-                    return "Late Deceleration"
+                    event["sub-type"] = "Late Deceleration"
 
         else:  # it's variable
             rules = rules["variable"]
             if event["attributes"]["has_initial_accel"] and event["attributes"]["has_terminal_accel"]:
-                return "Variable Typical"
+                event["sub-type"] = "Variable Typical"
             
-            elif event["attributes"]["prolonged_sec_accel"] or event["attributes"]["slow_return"] or event["attributes"]["has_biphasic_shape"] or event["attributes"]["baseline_decrease"]:
+            elif event["attributes"]["has_initial_accel"] or event["attributes"]["has_terminal_accel"] or event["attributes"]["prolonged_sec_accel"] or event["attributes"]["slow_return"] or event["attributes"]["has_biphasic_shape"] or event["attributes"]["baseline_decrease"]:
                 if event["nadir_value"] < 70 or event["amp_dec"] > 60 or event["duration"] > 60:
                     event["attributes"]["severity"] = "Severe"
                 elif event["nadir_value"] >= 70 and event["amp_dec"] <= 60 and event["duration"] <= 60:
                     event["attributes"]["severity"] = "Moderate"
                 else:
                     event["attributes"]["severity"] = "Undefined"
-                return "Variable Atypical"
-    return False
+                event["sub-type"] = "Variable Atypical"
+    else:
+        event["sub-type"] = False
+    return event
 
 
 
@@ -458,12 +460,11 @@ def find_events(filled_signal, baselines, fs=4, window_size=2400, time_threshold
                 )
 
             else:
-                nadir_idx = np.argmin(segment)
-                onset_to_nadir = nadir_idx / fs
-                nadir_to_baseline = (end_idx / fs) - onset_to_nadir
+                nadir_idx = start_idx + np.argmin(segment)
+                onset_to_nadir = (nadir_idx - start_idx) / fs
+                nadir_to_baseline = (end_idx - nadir_idx) / fs
                 event_variability = compute_event_variability(filled_signal[start_idx : end_idx])
-                baseline_after = compute_baseline(filled_signal[end_idx : end_idx + 600 * fs])
-                baseline_after = np.round(baseline_after) * 5
+                baseline_after = np.round(compute_baseline(filled_signal[end_idx : end_idx + 600 * fs])) * 5
                 nadir_value = filled_signal[nadir_idx]
                 events.append(
                     {
@@ -500,8 +501,6 @@ def find_events(filled_signal, baselines, fs=4, window_size=2400, time_threshold
             eventSample = 0
         else:
             i += 1
-        
-    #events = _resolve_fhr_overlaps(events) #i need to put it after the classification
 
     return events
 
@@ -540,7 +539,7 @@ def filter_shoulders(rules, events):
                     break
 
             # Only append as "Normal" if it hasn't already been handled by the deceleration logic!
-            if not was_appended and event.get("sub-type") == "Normal":
+            if not was_appended and event.get("sub-type") == "Acceleration":
                 filtered_events.append(event)
                 
         else:
@@ -601,15 +600,16 @@ def classify_events(signal, events, rules, contractions, fs=4):
             if has_terminal_accel:
                 e["attributes"]["has_terminal_accel"] = True
 
-            classific = classify_deceleration(
+            e = classify_deceleration(
                 signal,
                 e,
                 rules,
                 contractions,
             )
-            if is_lackingInfo and classific != False:
+            if is_lackingInfo and e["sub-type"] != False:
                 e["sub-type"] = f"Deceleration"
-            else:
-                e["sub-type"] = classific
+            #if e["sub-type"] != False:
+                #print(e)
+                #print()
 
     return evs
