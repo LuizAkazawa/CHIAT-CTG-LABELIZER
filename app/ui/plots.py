@@ -1,9 +1,9 @@
 # app/ui/plots.py
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QApplication, QInputDialog, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QApplication, QInputDialog, 
                              QDialog, QFormLayout, QComboBox, QDialogButtonBox,
-                             QSpinBox, QDoubleSpinBox)
+                             QSpinBox, QDoubleSpinBox, QGroupBox, QLabel)
 from PyQt6.QtCore import Qt
 
 
@@ -71,6 +71,145 @@ class NumericMetricsDialog(QDialog):
 
     def get_values(self):
         return self.base_spin.value(), self.var_spin.value()
+
+
+
+
+
+class FHREventDialog(QDialog):
+    def __init__(self, meta, parent=None):
+        super().__init__(parent)
+        self.meta = meta
+        self.e_type = meta.get('type', 'Unknown')
+        self.setWindowTitle(f"Edit {self.e_type.capitalize()}")
+        
+        # Main vertical layout
+        main_layout = QVBoxLayout(self)
+
+        self.subtype_combo = QComboBox()
+        if self.e_type == 'acceleration':
+            options = ["Acceleration", "Prolonged Acceleration", "Shoulder"]
+        elif self.e_type == 'deceleration':
+            options = ["Early Deceleration", "Late Deceleration", "Variable Typical", 
+                       "Variable Atypical", "Deceleration"]
+        else:
+            options = ["UC"]
+            
+        current_text = meta.get('sub-type', options[0])
+        if current_text not in options:
+            options.insert(0, current_text)
+            
+        self.subtype_combo.addItems(options)
+        self.subtype_combo.setCurrentText(current_text)
+        
+        type_layout = QFormLayout()
+        type_layout.addRow("Classification:", self.subtype_combo)
+        main_layout.addLayout(type_layout)
+
+        self.attr_combos = {}
+        if self.e_type == 'deceleration':
+            columns_layout = QHBoxLayout()
+            
+            left_form = QFormLayout()
+            right_form = QFormLayout()
+            
+            attrs = meta.get('attributes', {})
+            
+            self.left_schema = {
+                "is_slope_slow": {"options": ["False - Sudden (<30s)", "True - Slow (>=30s)"], "type": bool},
+                "is_prolonged": {"options": ["False - Short (<120s)", "True - Prolonged (>=120s)"], "type": bool},
+                "has_residual_zone": {"options": ["False", "True"], "type": bool},
+                "has_initial_accel": {"options": ["False", "True"], "type": bool},
+                "has_terminal_accel": {"options": ["False", "True"], "type": bool},
+                "prolonged_sec_accel": {"options": ["False", "True"], "type": bool},
+                "slow_return": {"options": ["False - Fast", "True - Slow"], "type": bool},
+                "has_biphasic_shape": {"options": ["False", "True"], "type": bool},
+                "baseline_decrease": {"options": ["False", "True"], "type": bool},
+                "absent_variability": {"options": ["False", "True"], "type": bool},
+            }
+
+            self.right_schema = {
+                "severity": {"options": ["Undefined", "Mild", "Moderate", "Severe"], "type": str},
+                "is_nadir_under_70": {"options": ["False (≥ 70 bpm)", "True (< 70 bpm)"], "type": bool},
+                "is_amp_over_60": {"options": ["False (≤ 60 bpm)", "True (> 60 bpm)"], "type": bool},
+                "is_duration_over_60": {"options": ["False (≤ 60 sec)", "True (> 60 sec)"], "type": bool}
+            }
+
+            def build_combos(schema, form_layout):
+                for key, config in schema.items():
+                    combo = QComboBox()
+                    combo.addItems(config["options"])
+                    
+                    current_val = attrs.get(key)
+                    
+                    if config["type"] == bool:
+                        # Match boolean to string (Defaults to False if None)
+                        prefix = "True" if current_val == True else "False"
+                        idx = next((i for i, opt in enumerate(config["options"]) if opt.startswith(prefix)), 0)
+                        combo.setCurrentIndex(idx)
+                    elif config["type"] == int:
+                        prefix = str(current_val) if current_val is not None else "0"
+                        idx = next((i for i, opt in enumerate(config["options"]) if opt.startswith(prefix)), 0)
+                        combo.setCurrentIndex(idx)
+                    else:
+                        if current_val:
+                            combo.setCurrentText(str(current_val))
+                        else:
+                            combo.setCurrentIndex(0) 
+                            
+                    self.attr_combos[key] = combo
+                    
+                    clean_label = key.replace("_", " ").capitalize() + ":"
+                    form_layout.addRow(clean_label, combo)
+
+            build_combos(self.left_schema, left_form)
+            build_combos(self.right_schema, right_form)
+            
+            left_group = QGroupBox("General Attributes")
+            left_group.setLayout(left_form)
+            
+            right_group = QGroupBox("Severity & Explanation")
+            right_group.setLayout(right_form)
+            
+            columns_layout.addWidget(left_group)
+            columns_layout.addWidget(right_group)
+            
+            main_layout.addLayout(columns_layout)
+
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        main_layout.addWidget(self.buttons)
+
+    def apply_changes(self):
+        """Saves the dialog UI state back into the dictionary memory."""
+        self.meta['sub-type'] = self.subtype_combo.currentText()
+        
+        if self.e_type == 'deceleration':
+            if 'attributes' not in self.meta:
+                self.meta['attributes'] = {}
+                
+            full_schema = {}
+            full_schema.update(getattr(self, 'left_schema', {}))
+            full_schema.update(getattr(self, 'right_schema', {}))
+                
+            for key, combo in self.attr_combos.items():
+                val_str = combo.currentText()
+                config = full_schema[key]
+                
+                # Parse strings back into strict JSON-compatible data types
+                if config["type"] == bool:
+                    self.meta['attributes'][key] = val_str.startswith("True")
+                elif config["type"] == int:
+                    self.meta['attributes'][key] = int(val_str.split(" ")[0])
+                else:
+                    self.meta['attributes'][key] = val_str
+
+
+
+
 
 
 class PlotArea(QWidget):
@@ -193,6 +332,9 @@ class PlotArea(QWidget):
                 brush=(0, 0, 255, 15), 
                 pen=pg.mkPen(color='b', width=1, style=Qt.PenStyle.DotLine)
             )
+
+            region.setZValue(-10) #testing layers
+
             self.p1.addItem(region)
             self.window_regions.append(region)
 
@@ -209,6 +351,9 @@ class PlotArea(QWidget):
                 </div>
             """
             label = pg.TextItem(html=html, anchor=(0, 0))
+
+            label.setZValue(1000)
+
             self.p1.addItem(label)
             label.setPos(t_start + 10, 195)
             self.status_items.append(label)
@@ -481,32 +626,20 @@ class PlotArea(QWidget):
             region.linked_label.setPos(midX, current_y)
 
     def _on_label_double_click(self, ev, label):
-        """Opens a dropdown dialog to select predefined labels."""
+        """Opens a custom dialog to edit the event classification and attributes."""
         ev.accept()
         meta = getattr(label, 'ctg_meta', {})
-        
-        # Check what area we are in (FHR vs TOCO)
         e_type = meta.get('type')
-        current_text = meta.get('sub-type', 'UC')
         
-        if e_type == 'acceleration':
-            options = ["Acceleration", "Prolonged Acceleration", "Shoulder"]
-        elif e_type == 'deceleration': #set another round of classification??
-            options = ["Early Deceleration", "Late Deceleration", "Variable Typical", "Variable Atypical", "Moderate Deceleration", "Severe Deceleration"]
-        else: # TOCO (Uterine Contractions)
-            options = ["UC"]
-            
-        try:
-            default_index = options.index(current_text)
-        except ValueError:
-            options.insert(0, current_text)
-            default_index = 0
-
-        new_text, ok = QInputDialog.getItem(self, "Select Label", "Choose the event type:", options, default_index, False)
+        # Open the custom dialog
+        dialog = FHREventDialog(meta, self)
         
-        if ok and new_text:
-            meta['sub-type'] = new_text
+        # If the user clicks OK, apply changes and update HTML
+        if dialog.exec():
+            dialog.apply_changes()
+            new_text = meta['sub-type']
             
+            # Formatting based on type
             if e_type == 'acceleration':
                 color, font_size, padding = 'green', '13pt', '4px'
             elif e_type == 'deceleration':
@@ -521,6 +654,8 @@ class PlotArea(QWidget):
                 </div>
             """
             label.setHtml(html)
+            
+            print(f"Updated {e_type} classification: {new_text}")#debuging
 
 
 
