@@ -314,7 +314,7 @@ def classify_deceleration(signal, event, rules, contractions, fs=4):
     if rules["prolonged"]["duration_min"] <= duration_sec <= rules["prolonged"]["duration_max"]:
         event["sub-type"] = "Prolonged Deceleration"
 
-    if rules["variable"]["duration_min"] < duration_sec < rules["variable"]["duration_max"]:  # uniform or variable
+    elif rules["variable"]["duration_min"] < duration_sec < rules["variable"]["duration_max"]:  # uniform or variable
         if onset_to_nadir >= rules["variable"]["onset_to_nadir_max"]:  # uniform -> if it's "smooth"
             rules_uniform = rules["uniform"]
             # not bad this solution
@@ -337,7 +337,8 @@ def classify_deceleration(signal, event, rules, contractions, fs=4):
             if event["attributes"]["has_initial_accel"] and event["attributes"]["has_terminal_accel"]:
                 event["sub-type"] = "Variable Typical"
             
-            elif event["attributes"]["has_initial_accel"] or event["attributes"]["has_terminal_accel"] or event["attributes"]["prolonged_sec_accel"] or event["attributes"]["slow_return"] or event["attributes"]["has_biphasic_shape"] or event["attributes"]["baseline_decrease"]:
+            #elif event["attributes"]["has_initial_accel"] or event["attributes"]["has_terminal_accel"] or event["attributes"]["prolonged_sec_accel"] or event["attributes"]["slow_return"] or event["attributes"]["has_biphasic_shape"] or event["attributes"]["baseline_decrease"]:
+            else:
                 if event["nadir_value"] < 70 or event["amp_dec"] > 60 or event["duration"] > 60:
                     event["attributes"]["severity"] = "Severe"
                 elif event["nadir_value"] >= 70 and event["amp_dec"] <= 60 and event["duration"] <= 60:
@@ -475,23 +476,28 @@ def find_events(filled_signal, baselines, fs=4, window_size=2400, time_threshold
                         "start_seconds": start_idx / fs,
                         "end_seconds": end_idx / fs,
                         "nadir_idx": nadir_idx,
-                        "onset_to_nadir": onset_to_nadir, #slope
-                        "nadir_to_baseline": nadir_to_baseline, #return to baseline
-                        "duration": duration_sec, #duration
+                        "onset_to_nadir": onset_to_nadir, 
+                        "nadir_to_baseline": nadir_to_baseline, 
+                        "duration": duration_sec, 
                         "amp_dec": amp_dec,
                         "nadir_value": nadir_value, 
                         "attributes": {
-                            "slope": 0 if onset_to_nadir < 30 else 1, #0 -> sudden  (<30) ///  1 -> slow (>=30)
-                            "duration_class": 0 if duration_sec < 120 else 1, # 0 -> short accel /// 1 -> prolonged accel
+                            "is_slope_slow": True if onset_to_nadir >= 30 else False,
+                            "is_prolonged": True if duration_sec >= 120 else False,
+                            
                             "has_residual_zone": False,
                             "has_initial_accel": False,
                             "has_terminal_accel": False,
                             "prolonged_sec_accel": False,
-                            "slow_return" : False if nadir_to_baseline < 30 else True, #False -> fast /// 1 -> slow
+                            "slow_return": True if nadir_to_baseline >= 30 else False,
                             "has_biphasic_shape": False,
-                            "baseline_decrease": False if baseline_after >= current_baseline else True,
-                            "absent_variability": False if event_variability >= 2 else True,
-                            "severity": "Undefined"
+                            "baseline_decrease": True if baseline_after < current_baseline else False,
+                            "absent_variability": True if event_variability < 2 else False,
+                            
+                            "severity": "Undefined",
+                            "is_nadir_under_70": True if nadir_value < 70 else False,
+                            "is_amp_over_60": True if amp_dec > 60 else False,
+                            "is_duration_over_60": True if duration_sec > 60 else False
                         }
                     }
                 )
@@ -566,7 +572,8 @@ def classify_events(signal, events, rules, contractions, fs=4):
             is_lackingInfo = True
         if e["type"] == "acceleration":
             if is_lackingInfo:
-                e["sub-type"] = f"Acceleration : {quality:.2f}"
+                #e["sub-type"] = f"Acceleration : {quality:.2f}"
+                e["sub-type"] = False
                 continue
             e["sub-type"] = classify_acceleration(
                 rules,
@@ -606,8 +613,10 @@ def classify_events(signal, events, rules, contractions, fs=4):
                 rules,
                 contractions,
             )
-            if is_lackingInfo and e["sub-type"] != False:
-                e["sub-type"] = f"Deceleration"
+            if is_lackingInfo:
+                e["sub-type"] = False
+            #if is_lackingInfo and e["sub-type"] != False:
+            #    e["sub-type"] = f"Deceleration"
             #if e["sub-type"] != False:
                 #print(e)
                 #print()

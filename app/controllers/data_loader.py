@@ -333,7 +333,7 @@ class DataLoader:
         end_s = time_seconds + (default_width / 2)
 
         # Define the sub-type dynamically based on the click
-        sub_type = "Manual Accel" if event_type == "acceleration" else "Manual Decel"
+        sub_type = "Acceleration" if event_type == "acceleration" else "Deceleration"
 
         if event_type == "acceleration":
             new_event = {
