@@ -79,7 +79,7 @@ class Sidebar(QWidget):
         self.file_list.setStyleSheet("background-color: white; border: 1px solid #ccc;")
         
         # Scan the 'Data' folder for .cts files
-        data_dir = "Data"
+        data_dir = "Data/2000split_1hour_files"
         if os.path.exists(data_dir):
             files = [f for f in os.listdir(data_dir) if f.endswith(".cts")]
             for f in sorted(files):
@@ -96,7 +96,7 @@ class Sidebar(QWidget):
 
     def _on_file_double_clicked(self, item):
         filename = item.text()
-        filepath = os.path.join("Data", filename)
+        filepath = os.path.join("Data/split_1hour_files", filename)
         self.file_selected.emit(filepath)
 
 

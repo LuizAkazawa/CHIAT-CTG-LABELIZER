@@ -49,8 +49,6 @@ class DataLoader:
 
     # ── Entry point ──────────────────────────────────────────────────────────
 
-    # ── Entry point ──────────────────────────────────────────────────────────
-
     def load_data(self):
         """Called by the manual 'Load CTS File' button."""
         if not self.ctg_rules:
@@ -86,12 +84,12 @@ class DataLoader:
             return
 
         # Signal processing
-        toco_segments = get_toco_segments(raw_toco, filtered_toco)
+        self.toco_segments = get_toco_segments(raw_toco, filtered_toco)
 
-        raw_contractions = find_contractions(filtered_toco, toco_segments, threshold=15)
+        raw_contractions = find_contractions(filtered_toco, self.toco_segments, threshold=15)
         self.fhr_windows = self._process_fhr(fhr_clean, fhr_filled, smooth_fhr, raw_contractions)
         self.fhr_events = self._process_events(fhr_filled, self.fhr_windows, raw_contractions)
-        self.toco_chunks = split_into_20min_chunks(fhr_raw, filtered_toco, raw_toco, raw_contractions, fs=4.0)
+        self.toco_chunks = split_into_20min_chunks(fhr_raw, smooth_fhr, fetal_movs, filtered_toco, raw_toco, raw_contractions, fs=4.0)
 
         # Map global references directly to the chunks
         self.contractions = []
@@ -101,7 +99,7 @@ class DataLoader:
 
         # Update plots
         self.plot_area.clear_annotations()
-        self.plot_area.update_signals(time_data, fhr_raw, raw_toco)
+        self.plot_area.update_signals(time_data, fhr_raw, fhr_clean, raw_toco)
 
         self.plot_area.register_callback_click(
             callback_funcao=self.add_manual_contraction, 
@@ -114,7 +112,7 @@ class DataLoader:
         )
 
         self._draw_all(
-            time_data, toco_segments, 
+            time_data, self.toco_segments, 
             self.fhr_windows,
             self.toco_chunks, self.fhr_events, fetal_movs
         )
@@ -131,7 +129,10 @@ class DataLoader:
     # ── Pre-processing ───────────────────────────────────────────────────────
 
     def _pre_process(self, df):
-        start_index   = trim_by_derivative(df["TOCO"].values, df["FHR1"].values)
+        if hasattr(self, 'current_filepath') and "_part" in self.current_filepath:
+            start_index = 0
+        else:
+            start_index = trim_by_derivative(df["TOCO"].values, df["FHR1"].values)
         #fhr_raw       = df['FHR1'].where(df['SIG1'] == 2).values[start_index:]
         fhr_raw       = df['FHR1'].values[start_index:]
         fhr_raw = remove_outers(fhr_raw)

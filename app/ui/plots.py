@@ -129,7 +129,7 @@ class FHREventDialog(QDialog):
             }
 
             self.right_schema = {
-                "severity": {"options": ["Undefined", "Mild", "Moderate", "Severe"], "type": str},
+                "severity": {"options": ["Undefined", "Moderate", "Severe"], "type": str},
                 "is_nadir_under_70": {"options": ["False (≥ 70 bpm)", "True (< 70 bpm)"], "type": bool},
                 "is_amp_over_60": {"options": ["False (≤ 60 bpm)", "True (> 60 bpm)"], "type": bool},
                 "is_duration_over_60": {"options": ["False (≤ 60 sec)", "True (> 60 sec)"], "type": bool}
@@ -255,9 +255,9 @@ class PlotArea(QWidget):
 
     def _setup_curves(self):
         """Create the main signal curves (no data yet)."""
-        #self.curve_filled = self.p1.plot(pen=PEN_FILLED_FHR,    name="Interpolated")
-        self.curve_raw    = self.p1.plot(pen=PEN_RAW_FHR,       name="Raw",          connect="finite")
-        self.curve_toco   = self.p2.plot(pen=PEN_TOCO,          name="TOCO")
+        self.curve_raw = self.p1.plot(pen=pg.mkPen(color=('r'), width=1.5), name="Raw", connect="finite")
+        self.curve_clean = self.p1.plot(pen=pg.mkPen(color='b', width=1.5), name="Clean")
+        self.curve_toco = self.p2.plot(pen=PEN_TOCO, name="TOCO")
 
     def _init_item_lists(self):
         """All annotation item lists in one place."""
@@ -277,11 +277,17 @@ class PlotArea(QWidget):
         self.window_regions       = []
 
     # ── Data update ─────────────────────────────────────────────────────────
+    def update_signals(self, time_data, fhr_raw, fhr_clean, toco_data):
+        self.time_data = time_data
+        
+        self.fhr_data = fhr_clean  
+        self.toco_data = toco_data
 
-    def update_signals(self, time_data, fhr_clean, raw_toco):
-        self.curve_raw.setData(time_data, fhr_clean)
-        #self.curve_filled.setData(time_data, fhr_filled)
-        self.curve_toco.setData(time_data, raw_toco)
+        self.curve_raw.setData(time_data, fhr_raw)
+        self.curve_clean.setData(time_data, fhr_clean)
+        self.curve_toco.setData(time_data, toco_data)
+
+        self.p1.setXRange(0, min(1200, time_data[-1]))
 
     def clear_annotations(self):
         all_items = (

@@ -5,18 +5,14 @@ import pyqtgraph as pg
 import json
 import numpy as np
 import os
+import math
 
 from app.ui.sidebar import Sidebar
 from app.ui.plots import PlotArea
 from app.controllers.data_loader import DataLoader
 
 
-import json
-import numpy as np
-import os
-import math  
-
-def save_chunks_to_json(dataset_chunks, fhr_events, fhr_windows, output_filepath):
+def save_chunks_to_json(dataset_chunks, fhr_events, fhr_windows, toco_segments, output_filepath):
     """
     Saves the strict 20-minute signal chunks, calculated contraction metrics,
     and FHR events to a formatted JSON file for convenient hand-corrections.
@@ -29,13 +25,15 @@ def save_chunks_to_json(dataset_chunks, fhr_events, fhr_windows, output_filepath
         chunk_start_s = chunk_idx * CHUNK_DURATION_S
         chunk_end_s = (chunk_idx + 1) * CHUNK_DURATION_S
 
-        # ── OPTIMIZED SIGNAL CONVERSION ──
-        # Extract the raw numpy arrays directly
-        toco_arr = chunk["filtered_toco_values"]
-        fhr_arr = chunk["fhr_values"]
+        filtered_toco_arr = chunk["filtered_toco_values"]
+        raw_toco_arr = chunk["raw_toco_values"]
+        raw_fhr_arr = chunk["raw_fhr_values"]
+        smooth_fhr_arr = chunk["smooth_fhr_values"]
 
-        toco_signal_list = [None if math.isnan(v) else int(round(v)) for v in toco_arr]
-        fhr_signal_list = [None if math.isnan(v) else int(round(v)) for v in fhr_arr]
+        filtered_toco_signal = [None if math.isnan(v) else int(round(v)) for v in filtered_toco_arr]
+        raw_toco_signal = [None if math.isnan(v) else int(round(v)) for v in raw_toco_arr]
+        raw_fhr_signal = [None if math.isnan(v) else int(round(v)) for v in raw_fhr_arr]
+        smooth_fhr_signal = [None if math.isnan(v) else int(round(v)) for v in smooth_fhr_arr]
 
         # ── Formatted Contractions ──────────────────────────────────────────
         formatted_contractions = []
@@ -68,13 +66,23 @@ def save_chunks_to_json(dataset_chunks, fhr_events, fhr_windows, output_filepath
                     }
                 )
 
+        formatted_fms = []
+        for fm_idx in chunk.get("fetal_movs", []):
+            formatted_fms.append({
+                "idx": int(fm_idx),
+                "seconds": float(fm_idx / 4.0)
+            })
+
         serializable_chunks.append(
             {
                 "chunk_index": chunk_idx,
-                "toco_values": toco_signal_list,
-                "fhr_values": fhr_signal_list,
+                "filtered_toco_values": filtered_toco_signal,
+                "raw_toco_values" : raw_toco_signal,
+                "raw_fhr_values": raw_fhr_signal,
+                "smooth_fhr_values": smooth_fhr_signal,
                 "contractions": formatted_contractions,
                 "fhr_events": formatted_fhr,  
+                "fetal_movements": formatted_fms
             }
         )
 
@@ -91,8 +99,19 @@ def save_chunks_to_json(dataset_chunks, fhr_events, fhr_windows, output_filepath
             "var_class": str(win["var_class"])
         })
 
+    formatted_toco_bases = []
+    for seg in toco_segments:
+        formatted_toco_bases.append({
+            "start_idx": int(seg["indices"][0]),
+            "end_idx": int(seg["indices"][1]),
+            "start_seconds": float(seg["time_seconds"][0]),
+            "end_seconds": float(seg["time_seconds"][1]),
+            "baseline": float(seg["baseline"])
+        })
+
     final_export_data = {
-        "baselines": formatted_windows,
+        "windows_info": formatted_windows,
+        "toco_baselines": formatted_toco_bases,
         "chunks": serializable_chunks
     }
 
@@ -132,21 +151,25 @@ class CTGInteractiveViewer(QMainWindow):
 
 
     def _save_corrections_to_json(self):
-        """Calls the save routine, dinamically passing the data stored in memory."""
-        # Check if loader has data loaded
+        """Calls the save routine, dynamically passing the data stored in memory."""
         if hasattr(self.data_loader, "toco_chunks") and self.data_loader.toco_chunks:
+            
+            TARGET_SAVE_FOLDER = "Data/corrected_jsons"
+            os.makedirs(TARGET_SAVE_FOLDER, exist_ok=True) 
+            
             if hasattr(self.data_loader, "current_filepath") and self.data_loader.current_filepath:
-                base_path, _ = os.path.splitext(self.data_loader.current_filepath)
-                output_path = f"{base_path}_chunks_corrected.json"
+                file_name = os.path.basename(self.data_loader.current_filepath)
+                name_only, _ = os.path.splitext(file_name)
+                output_path = os.path.join(TARGET_SAVE_FOLDER, f"{name_only}_chunks_corrected.json")
             else:
-                output_path = "Data/Num1_RData_chunks_corrected.json"
+                output_path = os.path.join(TARGET_SAVE_FOLDER, "Num1_RData_chunks_corrected.json")
 
             current_fhr_events = getattr(self.data_loader, "fhr_events", [])
-
             current_fhr_windows = getattr(self.data_loader, "fhr_windows", [])
+            current_toco_segments = getattr(self.data_loader, "toco_segments", [])
 
             # Execute save with the new parameter
-            save_chunks_to_json(self.data_loader.toco_chunks, current_fhr_events, current_fhr_windows, output_path)
+            save_chunks_to_json(self.data_loader.toco_chunks, current_fhr_events, current_fhr_windows, current_toco_segments, output_path)
         else:
             print("Error: no data to save.")
 
