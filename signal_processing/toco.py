@@ -288,7 +288,7 @@ def _resolve_overlaps(seg_contractions, toco_filtered, fs):
 
     return resolved
 
-def split_into_20min_chunks(fhr_signal, filtered_toco, raw_toco, contractions_list, fs=4.0):
+def split_into_20min_chunks(raw_fhr, smooth_fhr, fetal_movs, filtered_toco, raw_toco, contractions_list, fs=4.0):
     """
     Splits a long TOCO signal and its detected contractions list into
     STRICTLY complete 20-minute windows (4800 samples each).
@@ -298,20 +298,21 @@ def split_into_20min_chunks(fhr_signal, filtered_toco, raw_toco, contractions_li
     chunk_samples = int(chunk_duration_sec * fs)  # 4800 samples
     total_samples = len(filtered_toco)
 
-    # FIX: Use floor division to only count full, complete 20-minute pieces
+    # only count full, complete 20-minute pieces
     num_chunks = total_samples // chunk_samples
 
     dataset_chunks = []
 
     for chunk_idx in range(num_chunks):
         start_sample = chunk_idx * chunk_samples
-        end_sample = start_sample + chunk_samples  # Always exactly +4800
+        end_sample = start_sample + chunk_samples
 
         filtered_toco_chunk = filtered_toco[start_sample : end_sample]
         raw_toco_chunk = raw_toco[start_sample : end_sample]
-        fhr_chunk = fhr_signal[start_sample : end_sample]
+        raw_fhr_chunk = raw_fhr[start_sample : end_sample]
+        filtered_fhr_chunk = smooth_fhr[start_sample : end_sample]
+        fetal_movs_chunk = [int(m) for m in fetal_movs if start_sample <= m < end_sample]
 
-        # 2. Gather contractions that fall completely or partially inside this window
         chunk_contractions = []
         for con in contractions_list:
             # Check if there is any intersection with the current chunk window
@@ -330,13 +331,14 @@ def split_into_20min_chunks(fhr_signal, filtered_toco, raw_toco, contractions_li
                 }
                 chunk_contractions.append(adjusted_contraction)
 
-        # 3. Append compiled chunk data
         dataset_chunks.append(
             {
                 "chunk_index": chunk_idx,
-                "filtered_toco_values": filtered_toco_chunk,  # Guaranteed length: 4800
-                "raw_toco_values": raw_toco_chunk,  # Guaranteed length: 4800
-                "fhr_values": fhr_chunk,
+                "filtered_toco_values": filtered_toco_chunk, 
+                "raw_toco_values": raw_toco_chunk,  
+                "fetal_movs": fetal_movs_chunk,
+                "raw_fhr_values": raw_fhr_chunk,
+                "smooth_fhr_values": filtered_fhr_chunk,
                 "contractions": chunk_contractions,
             }
         )

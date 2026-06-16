@@ -4,13 +4,13 @@ from scipy.signal import savgol_filter
 
 # ── Cleaning ─────────────────────────────────────────────────────────────────
 
-
-def remove_outliers(signal, threshold=15, max_rejects=20):
+def remove_outliers(signal, threshold=15, max_rejects=20, min_bpm=50, max_bpm=210):
     """
-    Removes sample-to-sample jumps above threshold by setting them to NaN.
-    Allows the baseline to shift if a jump is sustained (prevents erasing the whole signal).
+    Removes sample-to-sample jumps above threshold and clips physiological impossibilities.
     """
     clean = np.array(signal, copy=True)
+    clean[(clean > max_bpm) | (clean < min_bpm)] = np.nan
+    
     first_valid = np.where(~np.isnan(clean))[0]
     if len(first_valid) == 0:
         return clean
@@ -21,12 +21,15 @@ def remove_outliers(signal, threshold=15, max_rejects=20):
     for i in range(first_valid[0] + 1, len(clean)):
         val = clean[i]
         if not np.isnan(val):
+            # If the jump is too high, reject it
             if np.abs(val - last_valid_val) >= threshold and reject_count < max_rejects:
                 clean[i] = np.nan
                 reject_count += 1
             else:
+                # If the value is good, or we exhausted the reject limit, accept it
                 last_valid_val = val
                 reject_count = 0
+                
     return clean
 
 def remove_outers(signal, valley_limit=50, peak_limit=240):
@@ -44,14 +47,13 @@ def remove_events(signal, events):
     return signal
 
 
-def fill_all_gaps(fhr_signal, sigma=3, reliability_threshold=15):
+def fill_all_gaps(fhr_signal, sigma=3, reliability_threshold=15, fs=4.0):
     """
     Fills short NaN gaps (< reliability_threshold seconds) with stochastic
     interpolation. Longer gaps are left as NaN (signal loss).
     """
     signal = np.array(fhr_signal, copy=True)
     n = len(signal)
-    fs = 4
     i = 0
 
     while i < n:
@@ -62,14 +64,27 @@ def fill_all_gaps(fhr_signal, sigma=3, reliability_threshold=15):
             gap_end = i
             n_gap = gap_end - gap_start
 
-            if n_gap < fs * reliability_threshold:
-                y_start = signal[gap_start - 1] if gap_start > 0 else signal[gap_end]
-                y_end = signal[gap_end] if gap_end < n else y_start
-                signal[gap_start:gap_end] = _fill_gap_stochastic(
-                    y_start, y_end, n_gap, sigma
-                )
+            if n_gap < (fs * reliability_threshold):
+                
+                if gap_start == 0 and gap_end == n:
+                    break
+                    
+                elif gap_start == 0:
+                    y_end = signal[gap_end]
+                    y_start = y_end 
+                    
+                elif gap_end == n:
+                    y_start = signal[gap_start - 1]
+                    y_end = y_start 
+                    
+                else:
+                    y_start = signal[gap_start - 1]
+                    y_end = signal[gap_end]
+
+                signal[gap_start:gap_end] = _fill_gap_stochastic(y_start, y_end, n_gap, sigma)
         else:
             i += 1
+            
     return signal
 
 
@@ -192,7 +207,6 @@ def compute_event_variability(segment, fs=4.0):
     Calculates the variability by removing the 'slope' of the deceleration.
     -> still testing
     """
-    #try to do the idea -> if same direction we discard, otherwise we keep it. (can find direction -> bool var)
     going_up = False
     going_down = True
     nums = []
@@ -304,12 +318,12 @@ def classify_deceleration(signal, event, rules, contractions, fs=4):
     decel_end_sec = event["end_seconds"]
     decel_nadir_sec = decel_start_sec + onset_to_nadir #the sec nadir happens
 
-    start_idx = event["start_idx"]
-    end_idx = event["end_idx"]
+    #start_idx = event["start_idx"]
+    #end_idx = event["end_idx"]
 
     duration_sec = event["duration"]
 
-    segment = signal[start_idx:end_idx]
+    #segment = signal[start_idx:end_idx]
 
     if rules["prolonged"]["duration_min"] <= duration_sec <= rules["prolonged"]["duration_max"]:
         event["sub-type"] = "Prolonged Deceleration"
@@ -464,7 +478,7 @@ def find_events(filled_signal, baselines, fs=4, window_size=2400, time_threshold
                 nadir_idx = start_idx + np.argmin(segment)
                 onset_to_nadir = (nadir_idx - start_idx) / fs
                 nadir_to_baseline = (end_idx - nadir_idx) / fs
-                event_variability = compute_event_variability(filled_signal[start_idx : end_idx])
+                event_variability = compute_event_variability(filled_signal[start_idx : end_idx]) # it's not working properly
                 baseline_after = np.round(compute_baseline(filled_signal[end_idx : end_idx + 600 * fs])) * 5
                 nadir_value = filled_signal[nadir_idx]
                 events.append(
@@ -490,7 +504,7 @@ def find_events(filled_signal, baselines, fs=4, window_size=2400, time_threshold
                             "has_terminal_accel": False,
                             "prolonged_sec_accel": False,
                             "slow_return": True if nadir_to_baseline >= 30 else False,
-                            "has_biphasic_shape": False,
+                            "has_biphasic_shape": False, #didn't find a way to detect it properly.
                             "baseline_decrease": True if baseline_after < current_baseline else False,
                             "absent_variability": True if event_variability < 2 else False,
                             
@@ -561,14 +575,24 @@ def classify_events(signal, events, rules, contractions, fs=4):
 
     for e in evs:
         is_lackingInfo = False
-        fds_min = max(e["start_idx"] - (30 * fs), 0)
-        fds_max = min(len(signal), e["end_idx"] + (30 * fs))
-        window_size = fds_max - fds_min
+        range_min = max(e["start_idx"] - (30 * fs), 0)
+        range_max = min(len(signal), e["end_idx"] + (30 * fs))
+        window_size = range_max - range_min
+        event_size = e["end_idx"] - e["start_idx"]
+        
+        if event_size == 0: 
+            event_size = 1
 
-        quality = np.count_nonzero(~np.isnan(signal[fds_min:fds_max])) / (window_size)
-        #print("quality:", quality)
+        quality_window = np.count_nonzero(~np.isnan(signal[range_min:range_max])) / window_size
+        
+        quality_event = np.count_nonzero(~np.isnan(signal[e["start_idx"] : e["end_idx"]])) / event_size
+        #print("START AND END", e['start_idx']/4, e['end_idx']/4)
+        #print("quality_window:", quality_window)
+        #print("quality_event:", quality_event)
+        #print(signal[e["start_idx"]-24 : e["end_idx"]+24])
+        #print()
 
-        if quality < 0.8:
+        if quality_window < 0.8 or quality_event < 0.5:
             is_lackingInfo = True
         if e["type"] == "acceleration":
             if is_lackingInfo:
